@@ -7,6 +7,8 @@ Built for a live demo in a talk about PRISM2, published in Nature Medicine as
 [End-to-end multimodal pathology foundation model with clinical dialogue](https://www.nature.com/articles/s41591-026-04521-4)
 (Vorontsov et al., 2026).
 
+![Screenshot of the chat interface](preview.png)
+
 ## How it works
 
 1. The `.svs` slide is tiled and embedded with
