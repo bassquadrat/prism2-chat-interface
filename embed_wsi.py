@@ -2,7 +2,8 @@
 Embed a folder of .svs whole-slide images with Virchow2.
 
 Tiles at 20x (0.5 mpp), 224 px, and drops tiles without enough tissue, following the PRISM2
-paper (arXiv:2506.13063, Methods 4.1). The paper uses a tissue segmentation model. Here a
+paper (Vorontsov et al., Nature Medicine 2026, https://www.nature.com/articles/s41591-026-04521-4).
+The paper uses a tissue segmentation model. Here a
 simple HSV threshold stands in for it.
 
 --wsi-dir is searched recursively, so a flat folder and the GDC download layout (one UUID
@@ -44,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tile-size", type=int, default=224, help="tile size in pixels (default: 224)")
     parser.add_argument("--min-tissue", type=float, default=0.65,
                          help="minimum tissue fraction to keep a tile "
-                              "(default: 0.65, matches PRISM2 paper Methods 4.1)")
+                              "(default: 0.65, matches PRISM2 paper)")
     parser.add_argument("--batch-size", type=int, default=64,
                          help="tiles per GPU forward pass (default: 64)")
     return parser.parse_args()

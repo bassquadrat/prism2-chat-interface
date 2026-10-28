@@ -3,15 +3,16 @@
 A chat interface for [PRISM2](https://huggingface.co/paige-ai/Prism2), Paige AI's pathology
 vision-language foundation model. Pick a whole-slide image, ask a question and get an answer.
 
-Built for a live demo in a talk about PRISM2, introduced in
-[PRISM2: Unlocking Multi-Modal General Pathology AI](https://arxiv.org/abs/2506.13063).
+Built for a live demo in a talk about PRISM2, published in Nature Medicine as
+[End-to-end multimodal pathology foundation model with clinical dialogue](https://www.nature.com/articles/s41591-026-04521-4)
+(Vorontsov et al., 2026).
 
 ## How it works
 
 1. The `.svs` slide is tiled and embedded with
    [Virchow2](https://huggingface.co/paige-ai/Virchow2): 224 px tiles at 20x (0.5 mpp), tissue
    only. Tile size and magnification follow the
-   [PRISM2 paper](https://arxiv.org/abs/2506.13063) (Methods 4.1), but tissue detection is
+   [PRISM2 paper](https://www.nature.com/articles/s41591-026-04521-4) (Methods), but tissue detection is
    not the same: the paper uses a trained segmentation model, here a simple HSV color
    threshold stands in for it.
 2. The tile embeddings go to PRISM2's `get_response()` together with your prompt. PRISM2 uses
