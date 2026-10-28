@@ -6,11 +6,10 @@ __pycache__/
 .venv/
 venv/
 
-# slides and embeddings (large, and may contain patient data)
+# slides and embeddings
 *.svs
 *.pt
 test_slides/
-test_slides_small/
 test_cache/
 
 # os / editor

@@ -10,6 +10,9 @@ Embedding a slide is slow the first time. After that it stays in memory, and on 
 --cache-dir (same {slide_id}_tiles.pt format as embed_wsi.py, so slides embedded with it load
 right away). Each question is answered on its own, the model doesn't see earlier messages.
 
+--model smolvlm is for local tests without an NVIDIA GPU: it skips Virchow2 and PRISM2 and
+asks SmolVLM-256M (a small general vision-language model) about the slide thumbnail instead.
+Its answers say nothing about PRISM2, so the page title says which model is running.
 
 Usage:
     python demo_server.py --image-root /path/to/svs_folder [--cache-dir /path/to/tile_cache]
@@ -32,7 +35,8 @@ from urllib.parse import parse_qs, urlparse
 
 import openslide
 import torch
-from transformers import AutoModel, AutoProcessor
+from PIL import Image
+from transformers import AutoModel, AutoModelForImageTextToText, AutoProcessor
 
 sys.path.append(str(Path(__file__).parent))
 from embed_wsi import embed_tiles_batch, extract_tiles_svs, get_best_level, load_virchow2   # noqa: E402
@@ -43,76 +47,10 @@ MIN_TISSUE = 0.65
 MAX_BODY_BYTES = 1_000_000
 MAX_PROMPT_CHARS = 2000
 PREVIEW_SIZE = (480, 480)
+SMOLVLM = "HuggingFaceTB/SmolVLM-256M-Instruct"
+TITLES = {"prism2": "PRISM2 demo", "smolvlm": "Local test: SmolVLM-256M"}
 
-PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>PRISM2 demo</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 1.5rem auto; padding: 0 1rem; }
-  h2 { margin-bottom: .2rem; }
-  .note { color: #666; font-size: .85rem; margin-bottom: 1rem; }
-  select { width: 100%; padding: .5rem; font-size: 1rem; }
-  #preview { display: none; max-height: 220px; max-width: 100%; margin: .75rem 0; border: 1px solid #ccc; border-radius: 4px; }
-  #chat { border: 1px solid #ddd; border-radius: 8px; padding: .75rem; height: 380px; overflow-y: auto; background: #fafafa; }
-  .msg { margin: .5rem 0; padding: .6rem .8rem; border-radius: 8px; white-space: pre-wrap; max-width: 85%; }
-  .user { background: #dbeafe; margin-left: auto; }
-  .bot { background: #ececec; }
-  .meta { color: #888; font-size: .75rem; margin-top: .25rem; }
-  #row { display: flex; gap: .5rem; margin-top: .75rem; }
-  textarea { flex: 1; padding: .5rem; font-size: 1rem; resize: vertical; }
-  button { padding: 0 1.4rem; font-size: 1rem; cursor: pointer; }
-</style></head><body>
-<h2>PRISM2 demo</h2>
-<div class="note">Each question is answered independently — no memory of earlier messages.
-First question on a new slide takes a while (tiling + embedding).</div>
-<select id="slide"><option>loading slides...</option></select>
-<img id="preview" alt="slide preview">
-<div id="chat"></div>
-<div id="row">
-  <textarea id="prompt" rows="2" placeholder="Type a prompt, e.g. Generate a pathology report for this specimen. (Enter = send)"></textarea>
-  <button id="send">Send</button>
-</div>
-<script>
-const $ = id => document.getElementById(id);
-const token = new URLSearchParams(location.search).get("token") || "";
-const api = (path, opts = {}) => fetch(path, {...opts, headers: {"X-Demo-Token": token, "Content-Type": "application/json"}});
-
-function addMsg(cls, text, meta) {
-  const d = document.createElement("div"); d.className = "msg " + cls; d.textContent = text;
-  if (meta) { const m = document.createElement("div"); m.className = "meta"; m.textContent = meta; d.appendChild(m); }
-  $("chat").appendChild(d); $("chat").scrollTop = $("chat").scrollHeight; return d;
-}
-function showPreview() {
-  const s = $("slide").value; if (!s) return;
-  $("preview").style.display = "block";
-  $("preview").src = "/preview?slide=" + encodeURIComponent(s) + "&token=" + encodeURIComponent(token);
-}
-async function loadSlides() {
-  const r = await api("/slides"); const j = await r.json();
-  $("slide").innerHTML = "";
-  for (const s of j.slides) { const o = document.createElement("option"); o.value = s.path; o.textContent = s.name; $("slide").appendChild(o); }
-  showPreview();
-}
-$("slide").onchange = showPreview;
-
-async function send() {
-  const prompt = $("prompt").value.trim(); if (!prompt || $("send").disabled) return;
-  $("prompt").value = ""; $("send").disabled = true;
-  addMsg("user", prompt);
-  const wait = addMsg("bot", "working...");
-  const start = Date.now();
-  const timer = setInterval(() => { wait.textContent = "working... " + Math.round((Date.now() - start) / 1000) + " s"; }, 1000);
-  try {
-    const r = await api("/chat", {method: "POST", body: JSON.stringify({slide: $("slide").value, prompt})});
-    const j = await r.json();
-    wait.textContent = j.error ? "Error: " + j.error : j.answer;
-    if (!j.error) { const m = document.createElement("div"); m.className = "meta"; m.textContent = j.seconds.toFixed(1) + " s"; wait.appendChild(m); }
-  } catch (e) { wait.textContent = "Error: " + e; }
-  clearInterval(timer); $("send").disabled = false; $("prompt").focus();
-}
-$("send").onclick = send;
-$("prompt").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
-loadSlides();
-</script></body></html>"""
+PAGE = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -126,11 +64,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=200,
                          help="max length of each answer (default: 200)")
     parser.add_argument("--batch-size", type=int, default=64, help="tiles per GPU forward pass (default: 64)")
+    parser.add_argument("--model", choices=list(TITLES), default="prism2",
+                         help="smolvlm = small local test model on the thumbnail, runs on Mac/CPU (default: prism2)")
     return parser.parse_args()
 
 
 class Demo:
-    def __init__(self, image_root: Path, cache_dir: Path | None, max_new_tokens: int, batch_size: int) -> None:
+    def __init__(self, image_root: Path, cache_dir: Path | None, max_new_tokens: int, batch_size: int,
+                 model: str = "prism2") -> None:
         self.image_root = image_root.resolve()
         self.cache_dir = cache_dir
         if cache_dir:
@@ -140,6 +81,14 @@ class Demo:
         self.token = secrets.token_urlsafe(16)
         self.lock = threading.Lock()   # one GPU job at a time
         self.embeddings: dict[Path, torch.Tensor] = {}
+        self.model = model
+
+        if model == "smolvlm":
+            self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+            print(f"Device: {self.device}")
+            self.processor = AutoProcessor.from_pretrained(SMOLVLM)
+            self.smolvlm = AutoModelForImageTextToText.from_pretrained(SMOLVLM).eval().to(self.device)
+            return
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Device: {self.device}")
@@ -161,14 +110,17 @@ class Demo:
             raise ValueError("slide not found")
         return path
 
-    def thumbnail_png(self, rel: str) -> bytes:
-        slide = openslide.OpenSlide(str(self.resolve_slide(rel)))
+    def _thumbnail(self, path: Path) -> Image.Image:
+        slide = openslide.OpenSlide(str(path))
         try:
-            buf = io.BytesIO()
-            slide.get_thumbnail(PREVIEW_SIZE).convert("RGB").save(buf, format="PNG")
-            return buf.getvalue()
+            return slide.get_thumbnail(PREVIEW_SIZE).convert("RGB")
         finally:
             slide.close()
+
+    def thumbnail_png(self, rel: str) -> bytes:
+        buf = io.BytesIO()
+        self._thumbnail(self.resolve_slide(rel)).save(buf, format="PNG")
+        return buf.getvalue()
 
     def _slide_embeddings(self, path: Path) -> torch.Tensor:
         if path in self.embeddings:
@@ -192,6 +144,14 @@ class Demo:
     def chat(self, rel: str, prompt: str) -> str:
         path = self.resolve_slide(rel)
         with self.lock:
+            if self.model == "smolvlm":
+                messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+                text = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+                inputs = self.processor(text=text, images=[self._thumbnail(path)], return_tensors="pt").to(self.device)
+                with torch.inference_mode():
+                    out = self.smolvlm.generate(**inputs, max_new_tokens=self.max_new_tokens)
+                new_tokens = out[:, inputs["input_ids"].shape[1]:]
+                return self.processor.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
             embs = self._slide_embeddings(path)
             batch = self.processor(tile_embeddings=[embs]).to(self.device)
             with torch.autocast("cuda", torch.bfloat16), torch.inference_mode():
@@ -229,7 +189,8 @@ def make_handler(demo: Demo) -> type[BaseHTTPRequestHandler]:
             if not self._guard(query):
                 return
             if url.path == "/":
-                self._send(200, PAGE.encode(), "text/html; charset=utf-8")
+                page = PAGE.replace("PRISM2 demo", TITLES[demo.model])
+                self._send(200, page.encode(), "text/html; charset=utf-8")
             elif url.path == "/slides":
                 self._send_json(200, {"slides": demo.list_slides()})
             elif url.path == "/preview":
@@ -267,7 +228,7 @@ def make_handler(demo: Demo) -> type[BaseHTTPRequestHandler]:
 
 def main() -> None:
     args = parse_args()
-    demo = Demo(args.image_root, args.cache_dir, args.max_new_tokens, args.batch_size)
+    demo = Demo(args.image_root, args.cache_dir, args.max_new_tokens, args.batch_size, args.model)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(demo))
     print(f"Slides under {demo.image_root}: {len(demo.list_slides())}")
     print(f"Ready — open http://localhost:{args.port}/?token={demo.token}")

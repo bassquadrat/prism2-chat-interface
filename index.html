@@ -1,0 +1,69 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>PRISM2 demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 1.5rem auto; padding: 0 1rem; }
+  h2 { margin-bottom: .2rem; }
+  .note { color: #666; font-size: .85rem; margin-bottom: 1rem; }
+  select { width: 100%; padding: .5rem; font-size: 1rem; }
+  #preview { display: none; max-height: 220px; max-width: 100%; margin: .75rem 0; border: 1px solid #ccc; border-radius: 4px;}
+  #chat { border: 1px solid #ddd; border-radius: 8px; padding: .75rem; height: 380px; overflow-y: auto; background: #fafafa; }
+  .msg { margin: .5rem 0; padding: .6rem .8rem; border-radius: 8px; white-space: pre-wrap; max-width: 85%; }
+  .user { background: #dbeafe; margin-left: auto; }
+  .bot { background: #ececec; }
+  .meta { color: #888; font-size: .75rem; margin-top: .25rem; }
+  #row { display: flex; gap: .5rem; margin-top: .75rem; }
+  textarea { flex: 1; padding: .5rem; font-size: 1rem; resize: vertical; }
+  button { padding: 0 1.4rem; font-size: 1rem; cursor: pointer; }
+</style></head><body>
+<h2>PRISM2 demo</h2>
+<div class="note">Each question is answered independently (no memory of earlier messages).
+First question on a new slide takes a while (tiling + embedding).</div>
+<select id="slide"><option>loading slides...</option></select>
+<img id="preview" alt="slide preview">
+<div id="chat"></div>
+<div id="row">
+  <textarea id="prompt" rows="2" placeholder="Type a prompt, e.g. Generate a pathology report for this specimen. (Enter = send)"></textarea>
+  <button id="send">Send</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const token = new URLSearchParams(location.search).get("token") || "";
+const api = (path, opts = {}) => fetch(path, {...opts, headers: {"X-Demo-Token": token, "Content-Type": "application/json"}});
+
+function addMsg(cls, text, meta) {
+  const d = document.createElement("div"); d.className = "msg " + cls; d.textContent = text;
+  if (meta) { const m = document.createElement("div"); m.className = "meta"; m.textContent = meta; d.appendChild(m); }
+  $("chat").appendChild(d); $("chat").scrollTop = $("chat").scrollHeight; return d;
+}
+function showPreview() {
+  const s = $("slide").value; if (!s) return;
+  $("preview").style.display = "block";
+  $("preview").src = "/preview?slide=" + encodeURIComponent(s) + "&token=" + encodeURIComponent(token);
+}
+async function loadSlides() {
+  const r = await api("/slides"); const j = await r.json();
+  $("slide").innerHTML = "";
+  for (const s of j.slides) { const o = document.createElement("option"); o.value = s.path; o.textContent = s.name; $("slide").appendChild(o); }
+  showPreview();
+}
+$("slide").onchange = showPreview;
+
+async function send() {
+  const prompt = $("prompt").value.trim(); if (!prompt || $("send").disabled) return;
+  $("prompt").value = ""; $("send").disabled = true;
+  addMsg("user", prompt);
+  const wait = addMsg("bot", "working...");
+  const start = Date.now();
+  const timer = setInterval(() => { wait.textContent = "working... " + Math.round((Date.now() - start) / 1000) + " s"; }, 1000);
+  try {
+    const r = await api("/chat", {method: "POST", body: JSON.stringify({slide: $("slide").value, prompt})});
+    const j = await r.json();
+    wait.textContent = j.error ? "Error: " + j.error : j.answer;
+    if (!j.error) { const m = document.createElement("div"); m.className = "meta"; m.textContent = j.seconds.toFixed(1) + " s"; wait.appendChild(m); }
+  } catch (e) { wait.textContent = "Error: " + e; }
+  clearInterval(timer); $("send").disabled = false; $("prompt").focus();
+}
+$("send").onclick = send;
+$("prompt").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+loadSlides();
+</script></body></html>

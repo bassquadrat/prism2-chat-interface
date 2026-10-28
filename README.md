@@ -52,3 +52,14 @@ host and port.
 
 Other flags: `--port` (default 8000), `--max-new-tokens` (default 200, max answer length),
 `--batch-size` (default 64, tiles per GPU forward pass).
+
+### Local test without an NVIDIA GPU
+
+```bash
+python demo_server.py --image-root /path/to/folder_of_svs_files --model smolvlm
+```
+
+Swaps PRISM2 for [SmolVLM-256M](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct), a
+small general vision-language model that runs on a Mac (MPS) or CPU. It only sees the slide
+thumbnail and isn't trained on pathology, so its answers are only useful for testing the
+interface. The page title shows which model is running.
