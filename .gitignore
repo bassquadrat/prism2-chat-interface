@@ -1,0 +1,19 @@
+HANDOFF.md
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# slides and embeddings (large, and may contain patient data)
+*.svs
+*.pt
+test_slides/
+test_slides_small/
+test_cache/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/

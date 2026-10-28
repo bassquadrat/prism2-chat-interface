@@ -1,0 +1,9 @@
+torch
+transformers
+timm
+openslide-python
+opencv-python
+pillow
+numpy
+tqdm
+flash-attn; sys_platform == "linux"
